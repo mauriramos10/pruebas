@@ -39,6 +39,7 @@
     }
     img.logo-img{height:90px;width:auto;display:block}
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
   <div class="shell">
@@ -130,18 +131,32 @@
   </script>
 
 <script>
-// === Integración Excel + Búsqueda por SAP / Nombre ===
+// === Excel + BN + SAP/Nombre + Autodetección de tipo ===
 (function(){
   const EXCEL_URL = encodeURI("Avisos _ OT TELEC 1.xlsx");
   function colLetterToIndex(col){ let n=0; for(let i=0;i<col.length;i++){ n=n*26+(col.charCodeAt(i)-64);} return n-1; }
   const START_COL = colLetterToIndex("F");
   const END_COL   = colLetterToIndex("EG");
+  const BN_INDEX  = colLetterToIndex("BN");
 
   const inSAP   = document.getElementById("sapEquipo");
   const inName  = document.getElementById("sapNombre");
   const descEl  = document.getElementById("descEquipo");
   const calEl   = document.getElementById("calidadEquipo");
   const toolbar = document.getElementById("equiposToolbar");
+
+  (function ensureBNSelect(){
+    if(document.getElementById("bnSelect")) return;
+    const sapSection = (inSAP && inSAP.closest("section")) || document.body;
+    const wrap = document.createElement("div");
+    wrap.className = "mt-3";
+    wrap.innerHTML = `<label class="label" for="bnSelect">SELECCIONAR BN:</label>
+      <select id="bnSelect" class="input mt-1"></select>
+      <p id="loadInfo" class="text-xs muted mt-1">Cargando Excel…</p>`;
+    sapSection.appendChild(wrap);
+  })();
+  const bnSelect = document.getElementById("bnSelect");
+  const loadInfo = document.getElementById("loadInfo") || {textContent:()=>{}};
 
   const DESC_MAP = window.DESC_MAP || {
     "MOTOR ELECTRICO": [
@@ -176,10 +191,11 @@
     "ARRANCADOR DIRECTO/SUAVE": [], "MANEJADORA DE AIRE": [], "CHILLER": []
   };
 
-  function norm(s){ return (s==null? "": String(s)).normalize("NFD").replace(/\p{Diacritic}/gu,"").toLowerCase().trim(); }
+  function norm(s){ return (s==null? "": String(s)).normalize("NFD").toLowerCase().trim().replace(/[\u0300-\u036f]/g,""); }
 
   const SAP_HEADER_RX   = /(equipo\s*sap|\bsap\b)$/i;
   const NAME_HEADER_RX  = /(nombre.*equipo|equipo.*nombre|descripcion.*equipo|descripci[oó]n)/i;
+  const TYPE_HEADER_RX  = /(tipo.*equipo|equipo.*tipo|tipo\s*de\s*equipo|clase.*equipo|categor[ií]a.*equipo|tipo\s*activo|^tipo$)/i;
 
   const PATTERNS = {
     "NUMERO DE RODAMIENTO LADO ACOPLE": /(rodamiento|bearing).*acople/i,
@@ -222,10 +238,26 @@
 
   let headers = [];
   let rows = [];
+  let keys   = {sapKey:null, nameKey:null, typeKey:null};
 
-  function pickTipo(){
-    const active = toolbar && toolbar.querySelector("button.active");
-    return active ? active.dataset.eq : "MOTOR ELECTRICO";
+  function setActiveType(tipo){
+    if(!toolbar) return;
+    toolbar.querySelectorAll("button[data-eq]").forEach(b=>{
+      b.classList.toggle("active", b.dataset.eq === tipo);
+    });
+  }
+
+  function mapRawTypeToKnown(s){
+    const t = norm(s);
+    if(!t) return "";
+    if(t.includes("motor")) return "MOTOR ELECTRICO";
+    if(t.includes("variador") || t.includes("vdf") || t.includes("vfd")) return "VARIADOR DE FRECUENCIA";
+    if(t.includes("transformador")) return "TRANSFORMADOR";
+    if(t.includes("aire acondicionado") || t.includes("a/a") || t.includes("aa") || t.includes("split") || t.includes("package")) return "AIRE ACONDICIONADO";
+    if(t.includes("arrancador") || t.includes("soft")) return "ARRANCADOR DIRECTO/SUAVE";
+    if(t.includes("manejadora") || t.includes("ahu") || t.includes("handler")) return "MANEJADORA DE AIRE";
+    if(t.includes("chiller")) return "CHILLER";
+    return "";
   }
 
   function findValue(obj, label){
@@ -242,13 +274,34 @@
     return "";
   }
 
-  function renderLabeled(el, labels, obj){
-    if(!obj){ el.innerHTML = "<span class='text-slate-500'>No se encontró el equipo solicitado.</span>"; return; }
+  function scoreType(tipo, row){
+    const labels = (DESC_MAP[tipo]||[]).concat(QUALITY_MAP[tipo]||[]);
+    let c=0;
+    labels.forEach(lab=>{ const v = findValue(row, lab); if(String(v||"").trim()!=="") c++; });
+    return c;
+  }
+
+  function chooseType(row){
+    if(keys.typeKey && row[keys.typeKey]){
+      const mapped = mapRawTypeToKnown(row[keys.typeKey]);
+      if(mapped) return mapped;
+    }
+    // fallback: mejor score
+    let bestTipo = "MOTOR ELECTRICO", best = -1;
+    Object.keys(DESC_MAP).forEach(t=>{
+      const s = scoreType(t, row);
+      if(s > best){ best = s; bestTipo = t; }
+    });
+    return bestTipo;
+  }
+
+  function renderList(el, labels, row){
+    if(!row){ el.innerHTML = "<span class='text-slate-500'>No se encontró el equipo solicitado.</span>"; return; }
     const items = [];
-    labels.forEach(label => {
-      const val = findValue(obj, label);
+    labels.forEach(lab=>{
+      const val = findValue(row, lab);
       if(String(val||"").trim()!==""){
-        items.push(`<li><b>${label}:</b> ${val}</li>`);
+        items.push(`<li><b>${lab}:</b> ${val}</li>`);
       }
     });
     el.innerHTML = items.length ? `<ul class="list-disc pl-6">${items.join("")}</ul>`
@@ -256,71 +309,94 @@
   }
 
   function showRow(row){
-    const tipo = pickTipo();
-    const descLabels = DESC_MAP[tipo] || [];
-    const calLabels  = QUALITY_MAP[tipo] || [];
-    renderLabeled(descEl, descLabels, row);
-    renderLabeled(calEl,  calLabels,  row);
+    if(!row){ renderList(descEl, [], null); renderList(calEl, [], null); return; }
+    const tipo = chooseType(row);
+    setActiveType(tipo);
+    renderList(descEl, DESC_MAP[tipo]||[], row);
+    renderList(calEl,  QUALITY_MAP[tipo]||[], row);
   }
 
   function searchBySAP(val){
-    const sapKey = headers.find(h => SAP_HEADER_RX.test(h));
-    if(!sapKey){ alert("No se encontró la columna 'EQUIPO SAP' en F..EG."); return; }
-    const row = rows.find(r => norm(String(r[sapKey])) === norm(String(val)));
+    if(!val || !keys.sapKey) return;
+    const row = rows.find(r => norm(String(r[keys.sapKey])) === norm(String(val)));
     showRow(row || null);
   }
 
   function searchByName(val){
-    const nameKey = headers.find(h => NAME_HEADER_RX.test(h));
-    if(!nameKey){ alert("No se encontró la columna 'NOMBRE DEL EQUIPO' en F..EG."); return; }
+    if(!val || !keys.nameKey) return;
     const needle = norm(val);
-    const row = rows.find(r => norm(String(r[nameKey])).includes(needle));
+    const row = rows.find(r => norm(String(r[keys.nameKey])).includes(needle));
+    showRow(row || null);
+  }
+
+  function onBNChanged(){
+    const bn = bnSelect && bnSelect.value;
+    const row = rows.find(r => String(r.__BN||"").trim() === String(bn||"").trim());
+    if(row){
+      if(keys.sapKey)  inSAP  && (inSAP.value  = row[keys.sapKey]  || "");
+      if(keys.nameKey) inName && (inName.value = row[keys.nameKey] || "");
+    }
     showRow(row || null);
   }
 
   async function loadExcel(){
     try{
       const res = await fetch(EXCEL_URL);
+      if(!res.ok) throw new Error("No se pudo cargar el Excel");
       const buf = await res.arrayBuffer();
       const wb = XLSX.read(new Uint8Array(buf), {type:"array"});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
-      const hdrRow = aoa[0] || [];
-      headers = hdrRow.slice(START_COL, END_COL+1).map(h => String(h||"").trim());
-      headers = headers.map((h,i)=> h || `Col_${i+START_COL+1}`);
+      if(!aoa.length) throw new Error("Hoja vacía");
+      const hdr = aoa[0];
+
+      // headers en F..EG
+      const sliceHeaders = hdr.slice(START_COL, END_COL+1).map(h => String(h||"").trim());
+      headers = sliceHeaders.map((h,i)=> h || `Col_${i+START_COL+1}`);
+
+      keys.sapKey  = headers.find(h => SAP_HEADER_RX.test(h))  || null;
+      keys.nameKey = headers.find(h => NAME_HEADER_RX.test(h)) || null;
+      keys.typeKey = headers.find(h => TYPE_HEADER_RX.test(h)) || null;
+
       rows = [];
       for(let r=1; r<aoa.length; r++){
-        const full = aoa[r];
+        const full  = aoa[r];
         const slice = full.slice(START_COL, END_COL+1);
+        const bnVal = String(full[BN_INDEX] ?? "").trim();
         const obj = {};
-        headers.forEach((h,idx)=>{
-          const v = slice[idx];
-          if(String(v||"").trim()!=="") obj[h]=v;
-        });
+        headers.forEach((h,idx)=>{ const v=slice[idx]; if(String(v||"").trim()!=="") obj[h]=v; });
+        obj.__BN = bnVal;
         if(Object.keys(obj).length) rows.push(obj);
       }
+
+      if(bnSelect){
+        bnSelect.innerHTML = "";
+        const opt0 = document.createElement("option"); opt0.value=""; opt0.textContent="— Selecciona BN —"; bnSelect.appendChild(opt0);
+        const uniq = Array.from(new Set(rows.map(r => r.__BN).filter(Boolean)));
+        uniq.sort((a,b)=> String(a).localeCompare(String(b),'es',{sensitivity:'base'}))
+            .forEach(v => { const o=document.createElement("option"); o.value=v; o.textContent=v; bnSelect.appendChild(o); });
+        bnSelect.addEventListener("change", onBNChanged);
+      }
+
+      loadInfo && (loadInfo.textContent = `Registros BN: ${rows.filter(r=>r.__BN).length}`);
     }catch(e){
       console.error(e);
-      descEl.innerHTML = "<span class='text-red-600'>Error cargando Excel.</span>";
+      loadInfo && (loadInfo.textContent = "Error cargando Excel.");
+      descEl && (descEl.innerHTML = "<span class='text-red-600'>Error cargando Excel.</span>");
     }
   }
 
-  // Eventos de búsqueda
-  if(inSAP){
-    inSAP.addEventListener("keydown", e=>{ if(e.key==="Enter"){ searchBySAP(inSAP.value); } });
-    inSAP.addEventListener("change",   ()=>{ searchBySAP(inSAP.value); });
-  }
-  if(inName){
-    inName.addEventListener("keydown", e=>{ if(e.key==="Enter"){ searchByName(inName.value); } });
-    inName.addEventListener("change",   ()=>{ searchByName(inName.value); });
-  }
+  inSAP && inSAP.addEventListener("keydown", e=>{ if(e.key==="Enter"){ searchBySAP(inSAP.value); } });
+  inSAP && inSAP.addEventListener("change",   ()=>{ searchBySAP(inSAP.value); });
+  inName && inName.addEventListener("keydown", e=>{ if(e.key==="Enter"){ searchByName(inName.value); } });
+  inName && inName.addEventListener("change",   ()=>{ searchByName(inName.value); });
 
-  // Re-render al cambiar tipo si hay búsqueda activa
   toolbar && toolbar.addEventListener("click", (e)=>{
     const btn = e.target.closest("button[data-eq]");
     if(!btn) return;
     if(inSAP && inSAP.value)      searchBySAP(inSAP.value);
     else if(inName && inName.value) searchByName(inName.value);
+    else if(bnSelect && bnSelect.value) onBNChanged();
   });
 
   loadExcel();

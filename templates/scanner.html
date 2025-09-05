@@ -1,0 +1,49 @@
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scanner QR</title>
+  <link rel="stylesheet" href="/static/css/styles.css"/>
+  <!-- QR Scanner library via CDN -->
+  <script src="https://unpkg.com/html5-qrcode" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Scanner QR</h1>
+    <nav>
+      <a href="/">Equipos</a>
+    </nav>
+  </header>
+  <main>
+    <div id="reader" style="width: 360px; max-width: 100%;"></div>
+    <p id="scan-result"></p>
+  </main>
+  <script>
+    window.addEventListener('load', () => {
+      const el = document.getElementById('reader');
+      const result = document.getElementById('scan-result');
+      if (!window.Html5Qrcode) {
+        result.innerText = "No se cargó el lector (verifica conexión a internet).";
+        return;
+      }
+      const scanner = new Html5Qrcode('reader');
+      Html5Qrcode.getCameras().then(cams => {
+        const camId = cams?.[0]?.id;
+        if (!camId) { result.innerText = "No se encontró cámara."; return; }
+        scanner.start(
+          camId,
+          { fps: 10, qrbox: 250 },
+          (decoded) => {
+            result.innerText = "QR: " + decoded;
+            // Si el QR es una URL hacia /equipment/<id>, navegamos:
+            if (decoded.startsWith("http")) window.location.href = decoded;
+          },
+          (err) => {}
+        );
+      }).catch(() => result.innerText = "Permite acceso a la cámara.");
+    });
+  </script>
+</body>
+</html>

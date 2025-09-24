@@ -53,7 +53,6 @@
     let datosEquipos = [];
     let datosBombas = [];
 
-    // Normalizar claves de objetos
     function normalizarClaves(obj) {
       const nuevo = {};
       for (let key in obj) {
@@ -62,7 +61,6 @@
       return nuevo;
     }
 
-    // Cargar equipos.csv
     Papa.parse("equipos.csv", {
       download: true,
       header: true,
@@ -72,7 +70,6 @@
       }
     });
 
-    // Cargar componentes.csv
     Papa.parse("componentes.csv", {
       download: true,
       header: true,
@@ -104,10 +101,13 @@
           <strong>Nombre del Equipo:</strong> ${item["nombre del equipo"] || ""}
         `;
 
-        const sap = (item["codigo sap"] || "").trim().toLowerCase();
-        const relacionados = datosBombas.filter(c => 
-          ((c["codigo sap"] || "").trim().toLowerCase() === sap)
-        );
+        const sap = String(item["codigo sap"] || "").trim().toLowerCase();
+        console.log("🔍 Buscando SAP:", sap);
+        const relacionados = datosBombas.filter(c => {
+          const sapComponente = String(c["codigo sap"] || "").trim().toLowerCase();
+          console.log(" ↔ Comparando con:", sapComponente);
+          return sapComponente === sap;
+        });
 
         if (relacionados.length > 0) {
           div.innerHTML += `<p><strong>Componentes encontrados: ${relacionados.length}</strong></p>`;

@@ -56,7 +56,9 @@
     function normalizarClaves(obj) {
       const nuevo = {};
       for (let key in obj) {
-        nuevo[key.trim().toLowerCase()] = obj[key];
+        let k = key.trim().toLowerCase();
+        k = k.normalize("NFD").replace(/[̀-ͯ]/g, ""); // quitar acentos
+        nuevo[k] = obj[key];
       }
       return nuevo;
     }
@@ -99,7 +101,7 @@
         const div = document.createElement("div");
         div.classList.add("item");
         div.innerHTML = `
-          <strong>Ubicación Técnica:</strong> ${item["ubicación tecnica"] || ""}<br>
+          <strong>Ubicación Técnica:</strong> ${item["ubicacion tecnica"] || ""}<br>
           <strong>Código SAP:</strong> ${item["codigo sap"] || ""}<br>
           <strong>Nombre del Equipo:</strong> ${item["nombre del equipo"] || ""}
         `;
@@ -129,9 +131,9 @@
               <td>${c["caracteristicas"] || ""}</td>
               <td>${c["marca"] || ""}</td>
               <td>${c["codigo de repuesto"] || ""}</td>
-              <td>${c["descripción"] || ""}</td>
+              <td>${c["descripcion"] || ""}</td>
               <td>${c["posicion"] || ""}</td>
-              <td>${c["año"] || ""}</td>
+              <td>${c["ano"] || ""}</td>
             </tr>`;
           });
 

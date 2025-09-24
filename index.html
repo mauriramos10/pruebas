@@ -95,8 +95,10 @@
           <strong>Nombre del Equipo:</strong> ${item["NOMBRE DEL EQUIPO"] || ""}
         `;
 
-        const sap = (item["Codigo SAP"]+"").trim();
-        const relacionados = datosBombas.filter(c => (c["CODIGO SAP"]+"").trim() === sap);
+        const sap = (item["Codigo SAP"] || "").trim().toLowerCase();
+        const relacionados = datosBombas.filter(c => 
+          ((c["CODIGO SAP"] || "").trim().toLowerCase() === sap)
+        );
 
         if (relacionados.length > 0) {
           div.innerHTML += `<p><strong>Componentes encontrados: ${relacionados.length}</strong></p>`;

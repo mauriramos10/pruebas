@@ -13,11 +13,15 @@
     .btn { margin: 5px 0; padding: 7px 14px; background: #f26a21; border: none; border-radius: 6px; color: white; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-block; transition: all 0.2s ease-in-out; }
     .btn:hover { background: #c44f11; transform: scale(1.05); }
     .search-box { display: flex; justify-content: center; margin: 20px auto; gap: 10px; }
-    .search-box input { width: 250px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+    .search-box input { width: 220px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
     .contador { text-align: center; margin: 10px auto; font-weight: bold; color: #333; }
     .resultados { margin: 20px auto; max-width: 900px; }
     .item { background: white; margin: 20px auto; padding: 15px; border-radius: 8px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); max-width: 800px; }
     .item strong { color: #f26a21; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; font-size: 14px; }
+    th { background: #f26a21; color: white; }
+    #lectorQR { margin: 20px auto; width: 300px; display: none; }
   </style>
 </head>
 <body>
@@ -33,15 +37,19 @@
 
   <div class="search-box">
     <input type="text" id="buscarSAP" placeholder="Buscar por Código SAP">
+    <button class="btn" onclick="abrirQR()">📷 Escanear QR</button>
     <input type="text" id="buscarNombre" placeholder="Buscar por Nombre de Equipo">
   </div>
 
+  <div id="lectorQR"></div>
   <div class="contador" id="contador"></div>
   <div class="resultados" id="resultados"></div>
 
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script>
     let datosEquipos = [];
+    let datosBombas = [];
 
     function normalizarClaves(obj) {
       const nuevo = {};
@@ -53,11 +61,24 @@
       return nuevo;
     }
 
+    function normalizarSAP(valor) {
+      if (!valor) return "";
+      return String(parseInt(valor)).trim();
+    }
+
     Papa.parse("equipos.csv", {
       download: true,
       header: true,
       complete: function(results) {
         datosEquipos = results.data.map(normalizarClaves);
+      }
+    });
+
+    Papa.parse("componentes.csv", {
+      download: true,
+      header: true,
+      complete: function(results) {
+        datosBombas = results.data.map(normalizarClaves);
       }
     });
 
@@ -83,9 +104,44 @@
           <strong>Nombre del Equipo:</strong> ${item["nombre del equipo"] || ""}
         `;
 
-        const sap = String(item["codigo sap"]).trim();
+        const sap = normalizarSAP(item["codigo sap"]);
+        const relacionados = datosBombas.filter(c => normalizarSAP(c["codigo sap"]) === sap);
+
+        if (relacionados.length > 0) {
+          div.innerHTML += `<p><strong>Componentes encontrados: ${relacionados.length}</strong></p>`;
+          let tabla = `<table>
+            <thead>
+              <tr>
+                <th>Componente</th>
+                <th>Características</th>
+                <th>Marca</th>
+                <th>Código Repuesto</th>
+                <th>Descripción</th>
+                <th>Posición</th>
+                <th>Año</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+          relacionados.forEach(c => {
+            tabla += `<tr>
+              <td>${c["componente"] || ""}</td>
+              <td>${c["caracteristicas"] || ""}</td>
+              <td>${c["marca"] || ""}</td>
+              <td>${c["codigo de repuesto"] || ""}</td>
+              <td>${c["descripcion"] || ""}</td>
+              <td>${c["posicion"] || ""}</td>
+              <td>${c["ano"] || ""}</td>
+            </tr>`;
+          });
+
+          tabla += `</tbody></table>`;
+          div.innerHTML += tabla;
+        }
+
+        // PDF asociado solo a SAP 1093023
         if (sap === "1093023") {
-          div.innerHTML += `<p><a href="docs/1093023.pdf" target="_blank" class="btn">📄 Consulta Documento Técnico</a></p>`;
+          div.innerHTML += `<p><a href="docs/GOULDS STX.pdf" target="_blank" class="btn">📄 Consulta Documento Técnico</a></p>`;
         }
 
         contenedor.appendChild(div);
@@ -119,6 +175,22 @@
         document.getElementById("responsable").innerText = nuevo;
         localStorage.setItem("responsable", nuevo);
       }
+    }
+
+    function abrirQR() {
+      document.getElementById("lectorQR").style.display = "block";
+      const html5QrCode = new Html5Qrcode("lectorQR");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        qrCodeMessage => {
+          document.getElementById("buscarSAP").value = qrCodeMessage;
+          filtrar();
+          html5QrCode.stop();
+          document.getElementById("lectorQR").style.display = "none";
+        },
+        errorMessage => {}
+      ).catch(err => { console.error("Error al iniciar QR: ", err); });
     }
 
     window.onload = () => {
